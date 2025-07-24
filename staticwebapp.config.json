@@ -56,7 +56,7 @@
     }
   ],
   "navigationFallback": {
-    "rewrite": "index.html",
+    "rewrite": "/404",
     "exclude": [
       "_next/static/*",
       "/css/*",
