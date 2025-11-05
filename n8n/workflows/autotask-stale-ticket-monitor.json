@@ -1,0 +1,232 @@
+{
+  "name": "Autotask Stale Ticket Monitor",
+  "nodes": [
+    {
+      "parameters": {
+        "triggerTimes": [
+          {
+            "hour": 7,
+            "minute": 0
+          }
+        ]
+      },
+      "id": "1",
+      "name": "Schedule Check",
+      "type": "n8n-nodes-base.cron",
+      "typeVersion": 1,
+      "position": [
+        240,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "keepOnlySet": true,
+        "values": {
+          "number": [
+            {
+              "name": "staleAfterHours",
+              "value": 48
+            }
+          ],
+          "string": [
+            {
+              "name": "serviceDeskEmail",
+              "value": "servicedesk@example.com"
+            },
+            {
+              "name": "fromEmail",
+              "value": "servicedesk@example.com"
+            },
+            {
+              "name": "ticketUrlBase",
+              "value": "https://autotask.net/Ticket?ticketID="
+            }
+          ],
+          "array": [
+            {
+              "name": "awaitingCustomerStatusIds",
+              "value": [
+                20
+              ]
+            },
+            {
+              "name": "notificationRecipients",
+              "value": [
+                "servicedesk@example.com"
+              ]
+            }
+          ]
+        }
+      },
+      "id": "2",
+      "name": "Set Config",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 2,
+      "position": [
+        500,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "functionCode": "const staticData = this.getWorkflowStaticData('global');\nstaticData.autotaskStaleConfig = items[0]?.json ?? {};\nreturn items;"
+      },
+      "id": "3",
+      "name": "Persist Config",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [
+        760,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "resource": "ticket",
+        "operation": "getAll",
+        "returnAll": true,
+        "additionalFields": {
+          "fields": "id,ticketNumber,title,status,statusId,queueID,queueName,priority,priorityId,assignedResourceID,assignedResourceName,assignedResourceEmailAddress,lastActivityDate,createDate,lastModifiedDate,dueDateTime"
+        }
+      },
+      "id": "4",
+      "name": "Find Stale Candidates",
+      "type": "n8n-nodes-base.autotask",
+      "typeVersion": 1,
+      "position": [
+        1000,
+        300
+      ],
+      "credentials": {
+        "autotaskApi": {
+          "id": "1",
+          "name": "Autotask API"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "functionCode": "const staticData = this.getWorkflowStaticData('global');\nconst config = staticData.autotaskStaleConfig || {};\nconst cutoff = new Date();\nconst staleHours = Number(config.staleAfterHours) || 48;\ncutoff.setHours(cutoff.getHours() - staleHours);\nconst excludedStatuses = Array.isArray(config.awaitingCustomerStatusIds) ? config.awaitingCustomerStatusIds.map((id) => Number(id)) : [];\n\nconst results = items\n  .map((item) => {\n    const data = item.json;\n    const statusId = data.statusId ?? data.status?.id ?? null;\n    const statusName = data.status?.name ?? data.status ?? null;\n    const lastActivityDate = data.lastActivityDate ? new Date(data.lastActivityDate) : null;\n\n    return {\n      json: {\n        id: data.id,\n        ticketNumber: data.ticketNumber,\n        title: data.title,\n        statusId,\n        statusName,\n        queueId: data.queueID ?? data.queueId ?? null,\n        queueName: data.queueName ?? data.queue?.name ?? null,\n        priorityId: data.priorityId ?? data.priorityID ?? data.priority?.id ?? null,\n        priorityName: data.priority?.name ?? data.priority ?? null,\n        assignedResourceId: data.assignedResourceID ?? data.assignedResourceId ?? null,\n        assignedResourceName: data.assignedResourceName ?? data.assignedResource?.name ?? 'Unassigned',\n        assignedResourceEmail: data.assignedResourceEmailAddress ?? data.assignedResource?.email ?? config.serviceDeskEmail,\n        lastActivityDate: lastActivityDate ? lastActivityDate.toISOString() : null,\n        createDate: data.createDate ?? null,\n        dueDateTime: data.dueDateTime ?? null\n      }\n    };\n  })\n  .filter((item) => {\n    const statusId = item.json.statusId;\n    if (statusId && excludedStatuses.includes(Number(statusId))) {\n      return false;\n    }\n\n    const lastActivity = item.json.lastActivityDate ? new Date(item.json.lastActivityDate) : null;\n    if (!lastActivity) {\n      return true;\n    }\n\n    return lastActivity <= cutoff;\n  })\n  .map((item) => {\n    const lastActivity = item.json.lastActivityDate ? new Date(item.json.lastActivityDate) : null;\n    const ageHours = lastActivity ? Math.floor((Date.now() - lastActivity.getTime()) / (1000 * 60 * 60)) : null;\n    const ageDays = ageHours !== null ? Number((ageHours / 24).toFixed(1)) : null;\n\n    return {\n      json: {\n        ...item.json,\n        cutoffHours: staleHours,\n        cutoffAt: cutoff.toISOString(),\n        ageHours,\n        ageDays\n      }\n    };\n  });\n\nreturn results;"
+      },
+      "id": "5",
+      "name": "Filter Tickets",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [
+        1240,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "functionCode": "const staticData = this.getWorkflowStaticData('global');\nconst config = staticData.autotaskStaleConfig || {};\n\nif (!items.length) {\n  return [];\n}\n\nconst recipients = Array.isArray(config.notificationRecipients) && config.notificationRecipients.length\n  ? config.notificationRecipients\n  : [config.serviceDeskEmail].filter(Boolean);\n\nif (!recipients.length) {\n  throw new Error('No notification recipients configured. Please populate notificationRecipients or serviceDeskEmail in the Set Config node.');\n}\n\nconst fromEmail = config.fromEmail || config.serviceDeskEmail;\nif (!fromEmail) {\n  throw new Error('No fromEmail configured. Please set fromEmail in the Set Config node.');\n}\n\nconst ticketUrlBase = config.ticketUrlBase || '';\nconst staleDays = Number(((items[0].json.cutoffHours || 48) / 24).toFixed(1));\n\nconst rows = items.map((item) => {\n  const ticket = item.json;\n  const reference = ticket.ticketNumber || ticket.id;\n  const ticketUrl = ticketUrlBase ? `${ticketUrlBase}${reference}` : '';\n  const link = ticketUrl ? `<a href=\"${ticketUrl}\">${reference}</a>` : reference;\n  const age = ticket.ageDays !== null && ticket.ageDays !== undefined ? `${ticket.ageDays} day(s)` : 'Unknown';\n\n  return `<tr>\n    <td>${link || ''}</td>\n    <td>${ticket.title || ''}</td>\n    <td>${ticket.assignedResourceName || 'Unassigned'}</td>\n    <td>${ticket.statusName || ''}</td>\n    <td>${ticket.queueName || ''}</td>\n    <td>${age}</td>\n    <td>Last activity: ${ticket.lastActivityDate || 'Unknown'}<br/>Action: Provide customer-facing update or take the next resolution step.</td>\n  </tr>`;\n}).join('');\n\nconst html = `<p>The following ${items.length} Autotask ticket(s) have had no activity for at least ${staleDays} day(s) and are not waiting on the customer.</p>\n<table border=\"1\" cellpadding=\"6\" cellspacing=\"0\" style=\"border-collapse:collapse;\">\n  <thead>\n    <tr>\n      <th>Ticket</th>\n      <th>Title</th>\n      <th>Owner</th>\n      <th>Status</th>\n      <th>Queue</th>\n      <th>Age</th>\n      <th>Summary</th>\n    </tr>\n  </thead>\n  <tbody>\n    ${rows}\n  </tbody>\n</table>\n<p>Please review each ticket, add an update for the customer, or escalate to the appropriate team.</p>`;\n\nconst plain = `The following ${items.length} Autotask ticket(s) need attention:\n` + items.map((item) => {\n  const ticket = item.json;\n  const age = ticket.ageDays !== null && ticket.ageDays !== undefined ? `${ticket.ageDays} day(s)` : 'unknown age';\n  const reference = ticket.ticketNumber || ticket.id;\n  return `• ${reference}: ${ticket.title || ''} | Owner: ${ticket.assignedResourceName || 'Unassigned'} | Status: ${ticket.statusName || ''} | Age: ${age}`;\n}).join('\n');\n\nreturn [\n  {\n    json: {\n      subject: `Autotask tickets needing updates (${items.length})`,\n      htmlBody: html,\n      fallbackPlainText: plain,\n      to: recipients,\n      fromEmail\n    }\n  }\n];"
+      },
+      "id": "6",
+      "name": "Build Email Body",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [
+        1480,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "fromEmail": "={{$json.fromEmail}}",
+        "toEmail": "={{$json.to.join(', ')}}",
+        "subject": "={{$json.subject}}",
+        "text": "={{$json.fallbackPlainText}}",
+        "html": "={{$json.htmlBody}}"
+      },
+      "id": "7",
+      "name": "Send Notification Email",
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 2,
+      "position": [
+        1720,
+        300
+      ],
+      "credentials": {
+        "smtp": {
+          "id": "1",
+          "name": "Service Desk SMTP"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Schedule Check": {
+      "main": [
+        [
+          {
+            "node": "Set Config",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Set Config": {
+      "main": [
+        [
+          {
+            "node": "Persist Config",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Persist Config": {
+      "main": [
+        [
+          {
+            "node": "Find Stale Candidates",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Find Stale Candidates": {
+      "main": [
+        [
+          {
+            "node": "Filter Tickets",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Filter Tickets": {
+      "main": [
+        [
+          {
+            "node": "Build Email Body",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Email Body": {
+      "main": [
+        [
+          {
+            "node": "Send Notification Email",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "id": "AutotaskStaleTicketMonitor",
+  "versionId": "0f9e6c9c-9c88-4cdc-8f5b-68f15c7d4fef"
+}
