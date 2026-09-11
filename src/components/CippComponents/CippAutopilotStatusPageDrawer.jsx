@@ -1,8 +1,8 @@
 import React, { useState } from "react";
+import { CippIcons } from "../../utils/icon-registry";
 import { Divider, Button } from "@mui/material";
 import { Grid } from "@mui/system";
-import { useForm } from "react-hook-form";
-import { PostAdd } from "@mui/icons-material";
+import { useForm, useFormState } from "react-hook-form";
 import { CippOffCanvas } from "./CippOffCanvas";
 import CippFormComponent from "./CippFormComponent";
 import { CippFormTenantSelector } from "./CippFormTenantSelector";
@@ -20,15 +20,18 @@ export const CippAutopilotStatusPageDrawer = ({
     defaultValues: {
       TimeOutInMinutes: "",
       ErrorMessage: "",
-      ShowProgress: false,
-      EnableLog: false,
+      ShowProgress: true,
+      EnableLog: true,
       OBEEOnly: false,
-      blockDevice: false,
-      Allowretry: false,
-      AllowReset: false,
+      blockDevice: true,
+      AllowReset: true,
       AllowFail: false,
+      InstallWindowsUpdates: true,
     },
   });
+
+  // Get form state for validation
+  const { isValid } = useFormState({ control: formControl.control });
 
   const createStatusPage = ApiPostCall({
     urlFromData: true,
@@ -52,9 +55,9 @@ export const CippAutopilotStatusPageDrawer = ({
   return (
     <>
       <PermissionButton
-        requiredPermissions={requiredPermissions}
+        {...(PermissionButton !== Button ? { requiredPermissions } : {})}
         onClick={() => setDrawerVisible(true)}
-        startIcon={<PostAdd />}
+        startIcon={<CippIcons.PostAdd />}
       >
         {buttonText}
       </PermissionButton>
@@ -69,7 +72,7 @@ export const CippAutopilotStatusPageDrawer = ({
               variant="contained"
               color="primary"
               onClick={handleSubmit}
-              disabled={createStatusPage.isLoading}
+              disabled={!isValid || createStatusPage.isLoading}
             >
               {createStatusPage.isLoading
                 ? "Creating..."
@@ -145,14 +148,14 @@ export const CippAutopilotStatusPageDrawer = ({
             />
             <CippFormComponent
               type="switch"
-              label="Block device usage during setup"
-              name="blockDevice"
+              label="Install Windows Updates during setup"
+              name="InstallWindowsUpdates"
               formControl={formControl}
             />
             <CippFormComponent
               type="switch"
-              label="Allow retry"
-              name="Allowretry"
+              label="Block device usage during setup"
+              name="blockDevice"
               formControl={formControl}
             />
             <CippFormComponent
